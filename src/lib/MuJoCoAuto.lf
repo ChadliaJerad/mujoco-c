@@ -49,16 +49,7 @@ reaction(physics_timer) -> tick {=
       return;
     }
 
-    // Real-time pacing: if the simulation is running faster than real time, sleep briefly 
-    // to let real time catch up.
-    double sim_time_elapsed  = self->context.d->time - self->sim_start;
-    double wall_time_elapsed = glfwGetTime() - self->wall_start;
-    interval_t delta_ns = (interval_t)(self->sim_step * 1e9);
-    if (sim_time_elapsed > wall_time_elapsed + delta_ns) {
-        // Physics is ahead of wall clock: sleep briefly
-        // (glfwWaitEventsTimeout caps at ~1 frame)
-        glfwWaitEventsTimeout(sim_time_elapsed - wall_time_elapsed - delta_ns);
-    }
+    // Real-time pacing is managed by the LF runtime since we are using a timer (`physics_timer`)
     mj_step(self->context.m, self->context.d);
   =}
 }
