@@ -1,0 +1,186 @@
+<mujoco model="platooning">
+  <compiler autolimits="true"/>
+
+  <option gravity="0 0 -9.81" timestep="0.005"/>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="10 10" texuniform="true" reflectance=".2"/>
+    <mesh name="chasis" scale=".01 .006 .0015"
+      vertex=" 9   2   0
+              -10  10  10
+               9  -2   0
+               10  3  -10
+               10 -3  -10
+              -8   10 -10
+              -10 -10  10
+              -8  -10 -10
+              -5   0   20"/>
+  </asset>
+
+  <default>
+    <joint damping="0.07" frictionloss="0.01" actuatorfrcrange="-0.5 0.5"/>
+    <default class="wheel">
+      <geom type="cylinder" size=".03 .01" rgba=".5 .5 1 1" condim="3" friction="1 0.005 0.0001" priority="1"/>
+    </default>
+    <default class="decor">
+      <site type="box" rgba=".5 1 .5 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <!-- Ground plane – larger for platooning maneuvers -->
+    <geom type="plane" size="20 5 .01" material="grid"/>
+
+    <!-- ── Car 1 (lead vehicle) ── -->
+    <body name="car1" pos="0 0 .03">
+      <freejoint name="car1_free"/>
+      <light name="top_light1" pos="0 0 2" mode="trackcom" diffuse=".4 .4 .4"/>
+      <light name="front_light1" pos=".1 0 .02" dir="2 0 -1" diffuse="1 1 1"/>
+
+      <geom name="chassis1" type="mesh" mesh="chasis" rgba="0.8 0.2 0.2 1"/>
+      <geom name="front_wheel1" pos=".08 0 -.015" type="sphere" size=".015"
+            condim="3" friction="1 0.005 0.0001" priority="1"/>
+
+      <!-- Sensors to track car1 position/velocity for platooning control -->
+      <site name="car1_ref" pos="0 0 0" size=".005"/>
+
+      <body name="car1_left_wheel" pos="-.07 .06 0" zaxis="0 1 0">
+        <joint name="left1" type="hinge" axis="0 0 1"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+      <body name="car1_right_wheel" pos="-.07 -.06 0" zaxis="0 1 0">
+        <joint name="right1" type="hinge" axis="0 0 1"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+    </body>
+
+    <!-- ── Car 2 (following vehicle) ── -->
+    <body name="car2" pos="-0.4 0 .03">
+      <freejoint name="car2_free"/>
+      <light name="top_light2" pos="0 0 2" mode="trackcom" diffuse=".4 .4 .4"/>
+      <light name="front_light2" pos=".1 0 .02" dir="2 0 -1" diffuse="1 1 1"/>
+
+      <geom name="chassis2" type="mesh" mesh="chasis" rgba="0.2 0.4 0.8 1"/>
+      <geom name="front_wheel2" pos=".08 0 -.015" type="sphere" size=".015"
+            condim="3" friction="1 0.005 0.0001" priority="1"/>
+
+      <!-- Reference site on car2 nose for gap sensing -->
+      <site name="car2_ref" pos=".08 0 0" size=".005"/>
+
+      <body name="car2_left_wheel" pos="-.07 .06 0" zaxis="0 1 0">
+        <joint name="left2" type="hinge" axis="0 0 1"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+      <body name="car2_right_wheel" pos="-.07 -.06 0" zaxis="0 1 0">
+        <joint name="right2" type="hinge" axis="0 0 1"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+    </body>
+
+    <!-- ── Car 3 (second follower) ── -->
+    <body name="car3" pos="-0.8 0 .03">
+      <freejoint name="car3_free"/>
+      <light name="top_light3" pos="0 0 2" mode="trackcom" diffuse=".4 .4 .4"/>
+      <light name="front_light3" pos=".1 0 .02" dir="2 0 -1" diffuse="1 1 1"/>
+
+      <geom name="chassis3" type="mesh" mesh="chasis" rgba="0.2 0.7 0.3 1"/>
+      <geom name="front_wheel3" pos=".08 0 -.015" type="sphere" size=".015"
+            condim="3" friction="1 0.005 0.0001" priority="1"/>
+
+      <site name="car3_ref" pos=".08 0 0" size=".005"/>
+
+      <body name="car3_left_wheel" pos="-.07 .06 0" zaxis="0 1 0">
+        <joint name="left3" type="hinge" axis="0 0 1"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+      <body name="car3_right_wheel" pos="-.07 -.06 0" zaxis="0 1 0">
+        <joint name="right3" type="hinge" axis="0 0 1"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- ── Tendons: differential drive abstraction per car ── -->
+  <tendon>
+    <!-- Car 1 -->
+    <fixed name="forward1">
+      <joint joint="left1" coef=".2"/>
+      <joint joint="right1" coef=".2"/>
+    </fixed>
+    <fixed name="turn1">
+      <joint joint="left1" coef="-.2"/>
+      <joint joint="right1" coef=".2"/>
+    </fixed>
+    <!-- Car 2 -->
+    <fixed name="forward2">
+      <joint joint="left2" coef=".2"/>
+      <joint joint="right2" coef=".2"/>
+    </fixed>
+    <fixed name="turn2">
+      <joint joint="left2" coef="-.2"/>
+      <joint joint="right2" coef=".2"/>
+    </fixed>
+    <!-- Car 3 -->
+    <fixed name="forward3">
+      <joint joint="left3" coef=".2"/>
+      <joint joint="right3" coef=".2"/>
+    </fixed>
+    <fixed name="turn3">
+      <joint joint="left3" coef="-.2"/>
+      <joint joint="right3" coef=".2"/>
+    </fixed>);
+  </tendon>
+
+  <!-- ── Actuators ── -->
+  <actuator>
+    <motor name="forward1" tendon="forward1" ctrlrange="-1 1"/>
+    <motor name="turn1"    tendon="turn1"    ctrlrange="-1 1"/>
+    <motor name="forward2" tendon="forward2" ctrlrange="-1 1"/>
+    <motor name="turn2"    tendon="turn2"    ctrlrange="-1 1"/>
+    <motor name="forward3" tendon="forward3" ctrlrange="-1 1"/>
+    <motor name="turn3"    tendon="turn3"    ctrlrange="-1 1"/>
+  </actuator>
+
+  <!-- ── Sensors ── -->
+  <sensor>
+    <!-- Wheel torque sensors -->
+    <jointactuatorfrc name="frc_left1"  joint="left1"/>
+    <jointactuatorfrc name="frc_right1" joint="right1"/>
+    <jointactuatorfrc name="frc_left2"  joint="left2"/>
+    <jointactuatorfrc name="frc_right2" joint="right2"/>
+    <jointactuatorfrc name="frc_left3"  joint="left3"/>
+    <jointactuatorfrc name="frc_right3" joint="right3"/>
+
+    <!-- Wheel velocity sensors (useful for speed estimation) -->
+    <jointvel name="vel_left1"  joint="left1"/>
+    <jointvel name="vel_right1" joint="right1"/>
+    <jointvel name="vel_left2"  joint="left2"/>
+    <jointvel name="vel_right2" joint="right2"/>
+    <jointvel name="vel_left3"  joint="left3"/>
+    <jointvel name="vel_right3" joint="right3"/>
+
+    <!-- Frame-velocity sensors for platooning gap control -->
+    <framelinvel name="linvel_car1" objtype="body" objname="car1"/>
+    <framelinvel name="linvel_car2" objtype="body" objname="car2"/>
+    <framelinvel name="linvel_car3" objtype="body" objname="car3"/>
+
+    <!-- Site-position sensors to measure inter-vehicle gap -->
+    <framepos name="pos_car1" objtype="site" objname="car1_ref"/>
+    <framepos name="pos_car2" objtype="site" objname="car2_ref"/>
+    <framepos name="pos_car3" objtype="site" objname="car3_ref"/>
+  </sensor>
+
+</mujoco>

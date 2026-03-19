@@ -1,0 +1,351 @@
+<!--
+  MuJoCo MJCF: platooning_pololu.xml
+  ===================================
+  Three Pololu 3pi+ 2040 robots in a platooning formation.
+  Designed to match exactly what Platooning.lf expects:
+
+  ACTUATORS (per robot):
+    forward1, forward2, forward3  — linear speed command  (m/s, range -1..1 mapped to ±MAX_SPEED)
+    turn1,    turn2,    turn3     — angular speed command (rad/s, range -1..1)
+
+  SENSORS (per robot):
+    pos_car1,    pos_car2,    pos_car3    — subtreecom  (3D position, dim=3)
+    linvel_car1, linvel_car2, linvel_car3 — velocimeter (3D linear vel, dim=3)
+
+  CONTROL INTERFACE
+  -----------------
+  The LF program sets:
+    ctrl[forwardIdx] = forward value  (-1..1)
+    ctrl[turnIdx]    = turn value     (-1..1)
+
+  We implement this with two velocity actuators per robot:
+    forward actuator → drives BOTH wheels equally      (v_L = v_R = forward * MAX_SPEED)
+    turn    actuator → drives wheels differentially    (v_L -= turn*TURN_GAIN, v_R += turn*TURN_GAIN)
+
+  Since MuJoCo velocity actuators act on a single joint, we model
+  forward/turn as actuators on two virtual "mixing joints" and use
+  a transmission gear to distribute to left/right wheels.
+
+  SIMPLER ALTERNATIVE (used here):
+  Use a slide+hinge free body with two standard velocity actuators
+  whose combined effect produces the unicycle motion.
+  Each robot has:
+    - A slide joint (Y axis) for forward motion   → "forward" actuator
+    - A hinge joint (Z axis) for turning          → "turn" actuator
+  The wheels are visual only (no drive joints) to keep the control
+  interface exactly matching what the LF expects (2 actuators, not 4).
+
+  ROBOT LAYOUT:
+    car1 at x=0.0  (leader)
+    car2 at x=0.3  (follower 1, 30cm behind)
+    car3 at x=0.6  (follower 2, 60cm behind)
+    All facing +X direction initially.
+
+  GEOMETRY: same as 3pi_plus_2040.xml
+    Chassis: cylinder 97mm dia, spawn z=0.016
+    Wheels:  32x7mm, radius 16mm
+    Caster:  6.35mm radius, offset -0.00965
+-->
+
+<mujoco model="platooning_pololu">
+
+  <compiler angle="radian" inertiafromgeom="true"/>
+
+  <option timestep="0.002"
+          gravity="0 0 -9.81"
+          integrator="RK4"
+          cone="elliptic"/>
+
+  <default>
+    <joint damping="0.001" frictionloss="0.0005"/>
+    <geom condim="4" friction="0.8 0.01 0.01" solref="0.004 1" solimp="0.99 0.999 0.0001"/>
+  </default>
+
+  <!-- ───────── ASSETS ───────── -->
+  <asset>
+    <material name="ground_mat"  rgba="1 1 1 1" reflectance="0.15"/>
+    <material name="line_mat"    rgba="0 0 0 1"/>
+    <material name="chassis1"    rgba="0.15 0.15 0.8 1"/>   <!-- blue  — leader   -->
+    <material name="chassis2"    rgba="0.15 0.7  0.15 1"/>  <!-- green — follower1 -->
+    <material name="chassis3"    rgba="0.8  0.15 0.15 1"/>  <!-- red   — follower2 -->
+    <material name="wheel_mat"   rgba="0.1  0.1  0.1  1"/>
+    <material name="caster_mat"  rgba="0.7  0.7  0.7  1"/>
+    <material name="bumper_mat"  rgba="0.2  0.2  0.2  0.8"/>
+  </asset>
+
+  <!-- ───────── WORLD ───────── -->
+  <worldbody>
+
+    <geom name="floor" type="plane" size="5 5 0.1"
+          material="ground_mat" friction="0.8 0.01 0.01" condim="3"/>
+
+    <!-- ── LIGHTS ─────────────────────────────────────────────────────── -->
+    <!-- Directional sun-like light from above-front -->
+    <light name="sun" directional="true" pos="0 0 3"
+           dir="0.2 -0.3 -1" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"
+           castshadow="true"/>
+    <!-- Ambient fill light from above to avoid harsh shadows -->
+    <light name="fill" directional="true" pos="0 0 2"
+           dir="-0.1 0.2 -1" diffuse="0.4 0.4 0.4" specular="0 0 0"
+           castshadow="false"/>
+
+    <!-- ── STRAIGHT LINE TRACK ────────────────────────────────────────────
+         Black line along X axis, 4m long, 20mm wide.
+         80 x 5cm box segments, sitting 0.5mm above the white floor.
+         contype/conaffinity=0: no physics collision, visual + sensor only.
+         Platoon starts at x=0,-0.3,-0.6 all facing +X — line runs
+         from x=-2.0 to x=+2.0 giving runway in both directions.
+    ──────────────────────────────────────────────────────────────────── -->
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.9750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.9250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.8750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.8250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.7750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.7250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.6750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.6250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.5750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.5250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.4750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.4250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.3750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.3250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.2750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.2250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.1750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.1250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.0750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-1.0250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.9750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.9250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.8750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.8250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.7750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.7250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.6750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.6250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.5750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.5250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.4750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.4250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.3750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.3250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.2750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.2250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.1750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.1250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.0750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="-0.0250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.0250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.0750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.1250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.1750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.2250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.2750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.3250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.3750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.4250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.4750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.5250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.5750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.6250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.6750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.7250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.7750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.8250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.8750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.9250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="0.9750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.0250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.0750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.1250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.1750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.2250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.2750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.3250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.3750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.4250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.4750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.5250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.5750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.6250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.6750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.7250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.7750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.8250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.8750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.9250 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+    <geom type="box" size="0.0250 0.0100 0.0005" pos="1.9750 0.0 0.0005" material="line_mat" contype="0" conaffinity="0"/>
+
+
+    <!-- ════════════════════════════════════════════
+         CAR 1 — Leader (blue), starts at x=0
+         ════════════════════════════════════════════ -->
+    <body name="car1" pos="0.0 0 0.016">
+      <!--
+        Two joints give us the unicycle DOF:
+          slide Y  → forward/back in the robot's local frame
+          hinge Z  → turning (yaw)
+        This is like splitting a joystick into two axes —
+        one stick controls speed, the other controls heading.
+      -->
+      <joint name="car1_slide" type="slide" axis="1 0 0"
+             damping="0.5" frictionloss="0.1"/>
+      <joint name="car1_hinge" type="hinge" axis="0 0 1"
+             damping="0.05" frictionloss="0.01"/>
+
+      <site name="imu1" pos="0 0 0.005" size="0.002"/>
+
+      <geom name="chassis1_geom" type="cylinder"
+            size="0.0485 0.0125" mass="0.085" material="chassis1"/>
+
+      <geom name="bumper1" type="box"
+            pos="0.040 0 -0.008" size="0.010 0.038 0.004"
+            mass="0.004" material="bumper_mat" contype="1" conaffinity="1"/>
+
+      <!-- Visual wheels (no drive joints — motion comes from slide/hinge) -->
+      <body name="car1_lw" pos="0 0.04275 0.0">
+        <geom type="cylinder" size="0.016 0.0035" mass="0.005"
+              euler="1.5708 0 0" material="wheel_mat"
+              friction="1.0 0.01 0.01" condim="4"/>
+      </body>
+      <body name="car1_rw" pos="0 -0.04275 0.0">
+        <geom type="cylinder" size="0.016 0.0035" mass="0.005"
+              euler="1.5708 0 0" material="wheel_mat"
+              friction="1.0 0.01 0.01" condim="4"/>
+      </body>
+      <body name="car1_caster" pos="-0.033 0 -0.00965">
+        <geom type="sphere" size="0.00635" mass="0.005"
+              material="caster_mat" friction="0.01 0.005 0.005" condim="1"/>
+      </body>
+    </body>
+
+    <!-- ════════════════════════════════════════════
+         CAR 2 — Follower 1 (green), starts at x=-0.3
+         ════════════════════════════════════════════ -->
+    <body name="car2" pos="-0.3 0 0.016">
+      <joint name="car2_slide" type="slide" axis="1 0 0"
+             damping="0.5" frictionloss="0.1"/>
+      <joint name="car2_hinge" type="hinge" axis="0 0 1"
+             damping="0.05" frictionloss="0.01"/>
+
+      <site name="imu2" pos="0 0 0.005" size="0.002"/>
+
+      <geom name="chassis2_geom" type="cylinder"
+            size="0.0485 0.0125" mass="0.085" material="chassis2"/>
+
+      <geom name="bumper2" type="box"
+            pos="0.040 0 -0.008" size="0.010 0.038 0.004"
+            mass="0.004" material="bumper_mat" contype="1" conaffinity="1"/>
+
+      <body name="car2_lw" pos="0 0.04275 0.0">
+        <geom type="cylinder" size="0.016 0.0035" mass="0.005"
+              euler="1.5708 0 0" material="wheel_mat"
+              friction="1.0 0.01 0.01" condim="4"/>
+      </body>
+      <body name="car2_rw" pos="0 -0.04275 0.0">
+        <geom type="cylinder" size="0.016 0.0035" mass="0.005"
+              euler="1.5708 0 0" material="wheel_mat"
+              friction="1.0 0.01 0.01" condim="4"/>
+      </body>
+      <body name="car2_caster" pos="-0.033 0 -0.00965">
+        <geom type="sphere" size="0.00635" mass="0.005"
+              material="caster_mat" friction="0.01 0.005 0.005" condim="1"/>
+      </body>
+    </body>
+
+    <!-- ════════════════════════════════════════════
+         CAR 3 — Follower 2 (red), starts at x=-0.6
+         ════════════════════════════════════════════ -->
+    <body name="car3" pos="-0.6 0 0.016">
+      <joint name="car3_slide" type="slide" axis="1 0 0"
+             damping="0.5" frictionloss="0.1"/>
+      <joint name="car3_hinge" type="hinge" axis="0 0 1"
+             damping="0.05" frictionloss="0.01"/>
+
+      <site name="imu3" pos="0 0 0.005" size="0.002"/>
+
+      <geom name="chassis3_geom" type="cylinder"
+            size="0.0485 0.0125" mass="0.085" material="chassis3"/>
+
+      <geom name="bumper3" type="box"
+            pos="0.040 0 -0.008" size="0.010 0.038 0.004"
+            mass="0.004" material="bumper_mat" contype="1" conaffinity="1"/>
+
+      <body name="car3_lw" pos="0 0.04275 0.0">
+        <geom type="cylinder" size="0.016 0.0035" mass="0.005"
+              euler="1.5708 0 0" material="wheel_mat"
+              friction="1.0 0.01 0.01" condim="4"/>
+      </body>
+      <body name="car3_rw" pos="0 -0.04275 0.0">
+        <geom type="cylinder" size="0.016 0.0035" mass="0.005"
+              euler="1.5708 0 0" material="wheel_mat"
+              friction="1.0 0.01 0.01" condim="4"/>
+      </body>
+      <body name="car3_caster" pos="-0.033 0 -0.00965">
+        <geom type="sphere" size="0.00635" mass="0.005"
+              material="caster_mat" friction="0.01 0.005 0.005" condim="1"/>
+      </body>
+    </body>
+
+  </worldbody>
+
+  <!-- ───────── ACTUATORS ───────── -->
+  <!--
+    Two actuators per robot matching exactly what the LF program looks up:
+      forward1/2/3 → velocity on slide joint (linear motion, m/s)
+      turn1/2/3    → velocity on hinge joint (yaw rate, rad/s)
+
+    ctrlrange -1..1 maps to:
+      forward: ±0.3 m/s   (gear=0.3)
+      turn:    ±3.5 rad/s (gear=3.5)
+
+    Think of gear as a scale factor — like a PWM-to-speed constant
+    in your motor driver firmware.
+  -->
+  <actuator>
+    <!-- Car 1 -->
+    <velocity name="forward1" joint="car1_slide" kv="2.0" gear="0.3"
+              ctrllimited="true" ctrlrange="-1 1"/>
+    <velocity name="turn1"    joint="car1_hinge" kv="0.5" gear="3.5"
+              ctrllimited="true" ctrlrange="-1 1"/>
+
+    <!-- Car 2 -->
+    <velocity name="forward2" joint="car2_slide" kv="2.0" gear="0.3"
+              ctrllimited="true" ctrlrange="-1 1"/>
+    <velocity name="turn2"    joint="car2_hinge" kv="0.5" gear="3.5"
+              ctrllimited="true" ctrlrange="-1 1"/>
+
+    <!-- Car 3 -->
+    <velocity name="forward3" joint="car3_slide" kv="2.0" gear="0.3"
+              ctrllimited="true" ctrlrange="-1 1"/>
+    <velocity name="turn3"    joint="car3_hinge" kv="0.5" gear="3.5"
+              ctrllimited="true" ctrlrange="-1 1"/>
+  </actuator>
+
+  <!-- ───────── SENSORS ───────── -->
+  <!--
+    Exactly the sensor names the LF program looks up via mj_name2id:
+      pos_car1/2/3    → subtreecom: 3D center-of-mass position (dim=3)
+      linvel_car1/2/3 → velocimeter on imu site: 3D linear velocity (dim=3)
+
+    The LF code reads:
+      sensordata[pos_addr + 0] = x
+      sensordata[pos_addr + 1] = y
+      sensordata[pos_addr + 2] = z
+  -->
+  <sensor>
+    <!-- Car 1 -->
+    <subtreecom  name="pos_car1"    body="car1"/>
+    <velocimeter name="linvel_car1" site="imu1"/>
+
+    <!-- Car 2 -->
+    <subtreecom  name="pos_car2"    body="car2"/>
+    <velocimeter name="linvel_car2" site="imu2"/>
+
+    <!-- Car 3 -->
+    <subtreecom  name="pos_car3"    body="car3"/>
+    <velocimeter name="linvel_car3" site="imu3"/>
+  </sensor>
+
+</mujoco>

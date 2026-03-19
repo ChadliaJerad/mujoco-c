@@ -1,0 +1,225 @@
+target C {
+  keepalive: true,
+//   single-threaded: true,
+//   cmake-include: ["include/mujoco.cmake"],
+  files: ["models/platooning_pololu2.xml"]
+}
+
+import MuJoCoAuto from "lib/MuJoCoAuto.lf"
+
+preamble {=
+  #include <stdio.h>
+  #include <stdlib.h>
+  #include <string.h>
+  #include <math.h>
+  #include <mujoco/mujoco.h>
+  #include <GLFW/glfw3.h>
+
+  #ifndef KEYPRESS_TYPES_H
+  #define KEYPRESS_TYPES_H
+  typedef struct {
+    int key;
+    int scancode;
+    int act;
+    int mods;
+  } keypress_t;
+  #endif // KEYPRESS_TYPES_H
+=}
+
+
+reactor Car {
+  input distFront: double
+  input distRear: double
+  input doReset: bool
+
+  output forward: double
+  output turn: double
+
+}
+
+reactor CarLeader extends Car {
+  input key: int
+  reaction(startup) {=
+    lf_print("Starting Platooning Simulation..........");
+  =}
+
+  reaction(key) -> forward, turn {=
+    lf_print("Key press detected: %d", key->value);
+    if (key->value == GLFW_KEY_UP) {
+      lf_set(forward, 1.0);
+	  lf_set(turn, 0);
+    } else if (key->value == GLFW_KEY_DOWN) {
+      lf_set(forward, -1.0);
+	  lf_set(turn, 0);
+	  } else if (key->value == GLFW_KEY_LEFT) {
+      lf_set(turn, 1.0);
+	    lf_set(forward, 0.0); 
+    } else if (key->value == GLFW_KEY_RIGHT) {
+      lf_set(turn, -1.0); 
+	    lf_set(forward, 0.0);
+	  } else if (key->value == 0) { // No key pressed
+      lf_set(forward, 0.0);
+      lf_set(turn, 0.0);
+    }
+  =}
+}
+
+reactor CarFollower extends Car {
+	reaction(distFront, distRear) -> forward, turn {=
+	// Simple proportional control to maintain a distance of 1.0 from the car in front.
+	double desired_distance = 1.0;
+	double error = distFront->value - desired_distance;
+	lf_set(forward, 0.5 * error); // Proportional control for forward speed.
+
+	// Simple proportional control to align with the car in front.
+	double turn_error = distRear->value - distFront->value; // Want rear distance to be equal to front distance.
+	lf_set(turn, 0.5 * turn_error); // Proportional control for turning.
+  =}
+
+}
+
+reactor PlatooningSim extends MuJoCoAuto {
+  input[3] forward: double
+  input[3] turn: double
+
+  output[3] distFront: double
+  output[3] distRear: double
+
+  state forwardCarIndex: int[] = {0, 0, 0}  // Actuator indexes.
+  state turnCarIndex: int[] = {0, 0, 0}
+  state carPositionIndex: int[] = {0, 0, 0}  // Sensor addresses
+  state carVelocityIndex: int[] = {0, 0, 0}
+  state carPositionDataAddress: int[] = {0, 0, 0}
+  state carVelocityDataAddress: int[] = {0, 0, 0}
+
+  state step_count : int = 0
+
+  reaction(startup) {=
+	// Get actuator indexes
+    self->forwardCarIndex[0] = mj_name2id(self->context.m, mjOBJ_ACTUATOR, "forward1");
+    self->forwardCarIndex[1] = mj_name2id(self->context.m, mjOBJ_ACTUATOR, "forward2");
+    self->forwardCarIndex[2] = mj_name2id(self->context.m, mjOBJ_ACTUATOR, "forward3");
+    self->turnCarIndex[0] = mj_name2id(self->context.m, mjOBJ_ACTUATOR, "turn1");
+    self->turnCarIndex[1] = mj_name2id(self->context.m, mjOBJ_ACTUATOR, "turn2");
+    self->turnCarIndex[2] = mj_name2id(self->context.m, mjOBJ_ACTUATOR, "turn3");
+
+	// Get position sensor indexes.
+	self->carPositionIndex[0] = mj_name2id(self->context.m, mjOBJ_SENSOR, "pos_car1");
+	self->carPositionIndex[1] = mj_name2id(self->context.m, mjOBJ_SENSOR, "pos_car2");
+	self->carPositionIndex[2] = mj_name2id(self->context.m, mjOBJ_SENSOR, "pos_car3");
+
+	// Get velocity sensor indexes.
+	self->carVelocityIndex[0] = mj_name2id(self->context.m, mjOBJ_SENSOR, "linvel_car1");
+	self->carVelocityIndex[1] = mj_name2id(self->context.m, mjOBJ_SENSOR, "linvel_car2");
+	self->carVelocityIndex[2] = mj_name2id(self->context.m, mjOBJ_SENSOR, "linvel_car3");
+
+	// Get position sensor data addresses and velocity sensor data addresses
+	for (int i = 0; i < 3; i++) {
+	  self->carPositionDataAddress[i] = self->context.m->sensor_adr[self->carPositionIndex[i]];
+	  self->carVelocityDataAddress[i] = self->context.m->sensor_adr[self->carVelocityIndex[i]];
+	}
+
+    // Check validity.
+    if (self->forwardCarIndex[0] < 0 || self->forwardCarIndex[1] < 0 || self->forwardCarIndex[2] < 0 ||
+        self->turnCarIndex[0] < 0 || self->turnCarIndex[1] < 0 || self->turnCarIndex[2] < 0 ||
+		self->carPositionIndex[0] < 0 || self->carPositionIndex[1] < 0 || self->carPositionIndex[2] < 0 ||
+		self->carVelocityIndex[0] < 0 || self->carVelocityIndex[1] < 0 || self->carVelocityIndex[2] < 0
+	) {
+      lf_print_error("Mismatched model file. Missing sensors or actuators.");
+      lf_request_stop();
+    }
+
+	// // Get addresses and dimensions.
+    // self->rightSensorIndex[0] = self->context.m->sensor_adr[right_index];
+    // int right_dim = self->context.m->sensor_dim[right_index];
+    // self->leftSensorIndex[0] = self->context.m->sensor_adr[left_index];
+    // int left_dim = self->context.m->sensor_dim[left_index];
+
+    // // Check validity.
+    // if (right_dim != 1 || left_dim != 1) {
+    //   lf_print_error("Mismatched model file. Expected sensors of dimension 1.");
+    //   lf_request_stop();
+    // }
+  =}
+
+  reaction(forward, turn) {=
+    lf_print("forward turn");
+    // Update the control inputs for each car in the simulation
+    for (int i = 0; i < 3; i++) {
+      if (forward[i]->is_present && turn[i]->is_present) {
+        // lf_print("Setting controls for car %d: forward=%f", i+1, forward[i]->value);
+        if (forward[i]->value == 0.0 && turn[i]->value == 0.0) {
+          mju_zero(&self->context.d->ctrl[self->forwardCarIndex[i]], 2); // Zero both forward and turn controls
+          mju_zero(&self->context.d->ctrl[self->turnCarIndex[i]], 2); // Zero both forward and turn controls
+        } else {
+          self->context.d->ctrl[self->forwardCarIndex[i]] = forward[i]->value;
+          self->context.d->ctrl[self->turnCarIndex[i]] = turn[i]->value;
+          // ctrl[forwardIdx[i]] = forward[i]->value + turn[i]->value;  // left  = fwd + turn
+          // ctrl[turnIdx[i]]    = forward[i]->value - turn[i]->value;  // right = fwd - turn
+        }
+      }
+    }
+  =}
+
+  reaction (physics_timer) {=
+    self->step_count++;
+	  if (self->step_count % 100 == 0) { // Print every
+	  	for (int i = 0; i < 3; i++) {
+	  		double x = self->context.d->sensordata[self->carPositionDataAddress[i] + 0];
+	  		double y = self->context.d->sensordata[self->carPositionDataAddress[i] + 1];
+	  		double z = self->context.d->sensordata[self->carPositionDataAddress[i] + 2];
+	  		lf_print("car %d pos: x=%.4f  y=%.4f  z=%.4f", i + 1, x, y, z);
+	  	}
+	  // }
+    // Print ctrl values every 20 steps so you can see if they're being wiped
+    // if (self->step_count % 20 == 0) {
+        lf_print("ctrl[forward0]=%.3f  ctrl[turn0]=%.3f  | stored=%.3f",
+            self->context.d->ctrl[self->forwardCarIndex[0]],
+            self->context.d->ctrl[self->turnCarIndex[0]]);
+            // self->ctrlForward[0]);
+    }
+  =}
+
+}
+
+main reactor {
+  platoonSim = new PlatooningSim(sim_step = 1 ms, model_file={= LF_SOURCE_GEN_DIRECTORY LF_FILE_SEPARATOR "platooning_pololu2.xml" =});
+  carLeader = new CarLeader();
+  carFollower1 = new CarFollower();  
+  carFollower2 = new CarFollower();
+
+  
+  platoonSim.distFront -> carLeader.distFront, carFollower1.distFront, carFollower2.distFront
+  platoonSim.distRear -> carLeader.distRear, carFollower1.distRear, carFollower2.distRear
+  carLeader.forward, carFollower1.forward, carFollower2.forward -> platoonSim.forward
+  carLeader.turn, carFollower1.turn, carFollower2.turn -> platoonSim.turn
+  
+  // Handle key presses from the simulation (inherited from MuJoCoBase)
+  reaction(platoonSim.key) -> platoonSim.restart, carLeader.key, carLeader.doReset {=
+    if (platoonSim.key->value.act == GLFW_PRESS) {
+      if (platoonSim.key->value.key == GLFW_KEY_Q) {
+        lf_print("Quit requested");
+        lf_request_stop();
+      } else if (platoonSim.key->value.key == GLFW_KEY_BACKSPACE || 
+                 platoonSim.key->value.key == GLFW_KEY_R) {
+        lf_set(platoonSim.restart, true);
+        lf_set(carLeader.doReset, true);
+      } else if (platoonSim.key->value.key == GLFW_KEY_UP || 
+		      platoonSim.key->value.key == GLFW_KEY_DOWN ||
+			    platoonSim.key->value.key == GLFW_KEY_LEFT || 
+			    platoonSim.key->value.key == GLFW_KEY_RIGHT
+	    ) {
+		    lf_print("Key press detected: %d", platoonSim.key->value.key);
+		    lf_set(carLeader.key, platoonSim.key->value.key);
+      }
+    } else if (platoonSim.key->value.act == GLFW_RELEASE) {   // ← add RELEASE
+      if (platoonSim.key->value.key == GLFW_KEY_UP ||  
+		        platoonSim.key->value.key == GLFW_KEY_DOWN ||
+			      platoonSim.key->value.key == GLFW_KEY_LEFT || 
+			      platoonSim.key->value.key == GLFW_KEY_RIGHT
+      ) {
+        lf_set(carLeader.key, 0); // key value alone isn't enough now
+      }
+    }
+  =}
+}
